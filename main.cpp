@@ -1,58 +1,78 @@
-#include <windows.h>
-#include <TlHelp32.h>
-#include <iostream>
+#define SOKOL_IMPL
+#define SOKOL_NO_ENTRY
+#define SOKOL_D3D11
+#include "sokol_app.h"
+#include "sokol_gfx.h"
+#include "sokol_glue.h"
+#include "sokol_log.h"
+#include "imgui.h"
+#include "util/sokol_imgui.h"
 
-DWORD findPidByName(const char* name) {
-    HANDLE h;
-    PROCESSENTRY32 singleProcess;
-    h = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+#include <vector>
 
-    singleProcess.dwSize = sizeof(PROCESSENTRY32);
+constexpr uint32_t SCREEN_WIDTH = 800;
+constexpr uint32_t SCREEN_HEIGHT = 600;
 
-    do {
-        if (strcmp(singleProcess.szExeFile, name) == 0) {
-            DWORD pid = singleProcess.th32ProcessID;
-            CloseHandle(h);
-            return pid;
-        }
-    } while (Process32Next(h, &singleProcess));
+struct {
+    struct {
+        sg_pipeline pip;
+        sg_pass_action pass_action;
+    } graphics;
+} state;
 
-    CloseHandle(h);
+void init() {
+    sg_desc _sg_desc{};
+    _sg_desc.environment = sglue_environment();
+    _sg_desc.logger.func = slog_func;
+    sg_setup(&_sg_desc);
 
-    return 0;
+    simgui_desc_t _simgui_desc{};
+    simgui_setup(&_simgui_desc);
+ }
+
+void frame() {
+    const double dt = sapp_frame_duration();
+
+    const int width = sapp_width();
+    const int height = sapp_height();
+    simgui_new_frame({ width, height, sapp_frame_duration(), sapp_dpi_scale() });
+
+    // imgui
+    {
+        ImGuiIO& io = ImGui::GetIO();
+
+        ImGui::ShowDemoWindow();
+    }
+
+    // graphics pass
+    sg_pass _graphics_pass = { .action=state.graphics.pass_action, .swapchain=sglue_swapchain() };
+    sg_begin_pass(&_graphics_pass);
+    simgui_render();
+    sg_end_pass();
+    sg_commit();
+}
+
+void cleanup() {
+    simgui_shutdown();
+    sg_shutdown();
+}
+
+void input(const sapp_event* event) {
+    simgui_handle_event(event);
 }
 
 int main() {
-    DWORD pid = findPidByName("victim.exe");
-
-    if (pid == 0) {
-        std::cout << "couldn't find victim.exe process" << std::endl;
-    } else {
-        std::cout << "Found the victim process!" << std::endl;
-
-        HANDLE handleToProcess = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
-
-        if (!handleToProcess) {
-            std::cout << "couldn't open victim.exe process" << std::endl;
-        } else {
-            std::cout << "Enter memory address:" << std::endl;
-            void* address;
-            std::cin >> address;
-
-            int data = 0;
-            ReadProcessMemory(handleToProcess, address, &data, sizeof(data), NULL);
-
-            std::cout << "data old value: " << data << std::endl;
-
-            int newData = 54321;
-            if (WriteProcessMemory(handleToProcess, address, &newData, sizeof(newData), NULL)) {
-                std::cout << "Successfully written the data!" << std::endl;
-            }
-        }
-    }
-
-    // std::cin.ignore();
-    // std::cin.get();
+    sapp_desc desc = {0};
+    desc.init_cb = init;
+    desc.frame_cb = frame;
+    desc.cleanup_cb = cleanup,
+    desc.event_cb = input,
+    desc.width  = SCREEN_WIDTH,
+    desc.height = SCREEN_HEIGHT,
+    desc.window_title = "sokol + puredoom",
+    desc.icon.sokol_default = true,
+    desc.logger.func = slog_func;
+    sapp_run(&desc);
 
     return 0;
 }
