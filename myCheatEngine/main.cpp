@@ -8,12 +8,8 @@
 #include "imgui.h"
 #include "util/sokol_imgui.h"
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#include <TlHelp32.h>
-
-#include <vector>
+#include "Program.h"
+#include "SystemFunctions.h"
 
 constexpr uint32_t SCREEN_WIDTH = 800;
 constexpr uint32_t SCREEN_HEIGHT = 600;
@@ -48,28 +44,111 @@ void frame() {
 
     // imgui
     {
-        // 1. Show a simple window
-        // Tip: if we don't call ImGui::Begin()/ImGui::End() the widgets appears in a window automatically called "Debug"
-        static float f = 0.0f;
-        ImGui::Text("Drag windows over one another!");
-        ImGui::SliderFloat("float", &f, 0.0f, 1.0f);
-        ImGui::ColorEdit3("clear color", &state.graphics.pass_action.colors[0].clear_value.r);
-        if (ImGui::Button("Test Window")) show_test_window ^= 1;
-        if (ImGui::Button("Another Window")) show_another_window ^= 1;
-        ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+        // ImGui::ShowDemoWindow();
 
-        // 2. Show another simple window, this time using an explicit Begin/End pair
-        if (show_another_window) {
-            ImGui::SetNextWindowSize(ImVec2(200,100), ImGuiCond_FirstUseEver);
-            ImGui::Begin("Another Window", &show_another_window);
-            ImGui::Text("Hello");
+        ImVec2 vWindowSize = ImGui::GetMainViewport()->Size;
+        ImVec2 vPos0 = ImGui::GetMainViewport()->Pos;
+        ImGui::SetNextWindowPos(ImVec2((float)vPos0.x, (float)vPos0.y), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2((float)vWindowSize.x, (float)vWindowSize.y), 0);
+        if (ImGui::Begin(
+                "Editor",
+                /*p_open=*/nullptr,
+                ImGuiWindowFlags_MenuBar |
+                ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoCollapse |
+                ImGuiWindowFlags_NoBringToFrontOnFocus |
+                ImGuiWindowFlags_NoTitleBar))
+        {
+
+            static const ImGuiDockNodeFlags dockspaceFlags = ImGuiDockNodeFlags_None;
+            ImGuiID dockSpace = ImGui::GetID("MainWindowDockspace");
+            ImGui::DockSpace(dockSpace, ImVec2(0.0f, 0.0f), dockspaceFlags);
+            static char name[256] = {};
+
+            static bool openWindow=1;
+
+            //static OppenedProgram oppenedProgram;
+            static OpenProgram openProgram;
+            static std::vector<OppenedProgram> programsOppened;
+
+            if (ImGui::BeginMenuBar())
+            {
+
+                if (ImGui::BeginMenu("Open..."))
+                {
+
+                    openProgram.render();
+
+                    openProgram.fileOpenLog.renderText();
+
+                    ImGui::EndMenu();
+                }
+
+
+                ImGui::EndMenuBar();
+            }
+
+
+            if (openProgram.pid)
+            {
+                //first check if already oopened
+                auto found = std::find_if(programsOppened.begin(), programsOppened.end(), [pid = openProgram.pid](const OppenedProgram& p)
+                {
+                    return p.pid == pid;
+                });
+
+                if (found == programsOppened.end())
+                {
+                    OppenedProgram newProgram;
+                    newProgram.isOppened = true;
+
+                    newProgram.pid = openProgram.pid;
+                    openProgram.pid = 0;
+
+                    newProgram.handleToProcess = openProgram.handleToProcess;
+                    openProgram.handleToProcess = 0;
+
+                    strcpy(newProgram.currentPocessName, openProgram.currentPocessName);
+                    openProgram.currentPocessName[0] = 0;
+
+                    programsOppened.push_back(newProgram);
+                }
+                else
+                {
+                    openProgram.fileOpenLog.setError("Process already oppened.", ErrorLog::ErrorType::info);
+                    closeProcess(openProgram.handleToProcess);
+                    openProgram.pid = 0;
+                    openProgram.currentPocessName[0] = 0;
+                    openProgram.handleToProcess = 0;
+
+                }
+
+            }
+
+            //if (oppenedProgram.pid)
+            for(int i=0; i<programsOppened.size(); i++)
+            {
+                auto& program = programsOppened[i];
+
+                if (!program.isAlive())
+                {
+                    //openProgram.fileOpenLog.setError("process closed", openProgram.fileOpenLog.info);
+                    program.writeLog.clearError();
+
+                    program.close();
+                    program.errorLog.setError("process closed", openProgram.fileOpenLog.info);
+                }
+
+                if(!program.render())
+                {
+                    program.close();
+                    programsOppened.erase(programsOppened.begin() + i);
+                    i--;
+                }
+            }
+
             ImGui::End();
-        }
-
-        // 3. Show the ImGui test window. Most of the sample code is in ImGui::ShowDemoWindow()
-        if (show_test_window) {
-            ImGui::SetNextWindowPos(ImVec2(460, 20), ImGuiCond_FirstUseEver);
-            ImGui::ShowDemoWindow();
         }
     }
 
@@ -98,7 +177,7 @@ int main() {
     desc.event_cb = input,
     desc.width  = SCREEN_WIDTH,
     desc.height = SCREEN_HEIGHT,
-    desc.window_title = "sokol + puredoom",
+    desc.window_title = "My Cheat Engine",
     desc.icon.sokol_default = true,
     desc.logger.func = slog_func;
     sapp_run(&desc);

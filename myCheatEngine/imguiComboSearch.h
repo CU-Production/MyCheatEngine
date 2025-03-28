@@ -304,7 +304,6 @@ namespace ImGui
 
             int show_count = isNeedFilter ? itemScoreVector.size() : items_count;
 
-//            if (ImGui::ListBoxHeader("##ComboWithFilter_itemList", show_count))
             if (ImGui::BeginListBox("##ComboWithFilter_itemList"))
             {
                 for (int i = 0; i < show_count; i++)
@@ -323,7 +322,6 @@ namespace ImGui
                         SetItemDefaultFocus();
                     PopID();
                 }
-//                ImGui::ListBoxFooter();
                 ImGui::EndListBox();
             }
             ImGui::PopItemWidth();
@@ -438,7 +436,6 @@ namespace ImGui
             }
 
             int show_count = isNeedFilter ? itemScoreVector.size() : items_count;
-//            if (ImGui::ListBoxHeader("##ComboWithFilter_itemList", show_count))
             if (ImGui::BeginListBox("##ComboWithFilter_itemList"))
             {
                 for (int i = 0; i < show_count; i++)
@@ -457,7 +454,6 @@ namespace ImGui
                         SetItemDefaultFocus();
                     PopID();
                 }
-//                ImGui::ListBoxFooter();
                 ImGui::EndListBox();
             }
             ImGui::PopItemWidth();
