@@ -1,0 +1,314 @@
+//http://kylehalladay.com/blog/2020/05/20/Hooking-Input-Snake-In-Notepad.html
+//https://github.com/milkdevil/injectAllTheThings
+
+#if defined WIN32 || defined _WIN32 || defined __WIN32__ || defined __NT__
+
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+#include <TlHelp32.h>
+#include "systemFunctions.h"
+#include "imgui.h"
+#include <vector>
+#include <algorithm>
+
+PID findPidByName(const char* name)
+{
+	HANDLE h;
+	PROCESSENTRY32 singleProcess;
+	h = CreateToolhelp32Snapshot( //takes a snapshot of specified processes
+		TH32CS_SNAPPROCESS, //get all processes
+		0); //ignored for SNAPPROCESS
+
+	singleProcess.dwSize = sizeof(PROCESSENTRY32);
+
+	do
+	{
+		if (strcmp(singleProcess.szExeFile, name) == 0)
+		{
+			DWORD pid = singleProcess.th32ProcessID;
+			CloseHandle(h);
+			return pid;
+		}
+
+	} while (Process32Next(h, &singleProcess));
+
+	CloseHandle(h);
+
+	return 0;
+}
+
+
+//https://stackoverflow.com/questions/1387064/how-to-get-the-error-message-from-the-error-code-returned-by-getlasterror
+std::string getLastErrorString()
+{
+	//Get the error message ID, if any.
+	DWORD errorMessageID = ::GetLastError();
+	if (errorMessageID == 0)
+	{
+		return std::string(); //No error message has been recorded
+	}
+
+	LPSTR messageBuffer = nullptr;
+
+	//Ask Win32 to give us the string version of that message ID.
+	//The parameters we pass in, tell Win32 to create the buffer that holds the message for us (because we don't yet know how long the message string will be).
+	size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+		NULL, errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
+
+	//Copy the error message into a std::string.
+	std::string message(messageBuffer, size);
+
+	//Free the Win32's string's buffer.
+	LocalFree(messageBuffer);
+
+	return message;
+}
+
+void writeMemory(PROCESS process, void* ptr, void* data, size_t size, ErrorLog& errorLog)
+{
+	errorLog.clearError();
+
+	BOOL writeSucceeded = WriteProcessMemory(
+		process,
+		ptr,
+		data,
+		size,
+		NULL);
+
+	if (!writeSucceeded)
+	{
+		errorLog.setError(getLastErrorString().c_str());
+	}
+
+}
+
+bool readMemory(PROCESS process, void *start, size_t size, void *buff)
+{
+	SIZE_T readSize = 0;
+	return ReadProcessMemory(process, start, buff, size, &readSize);
+}
+
+bool isProcessAlive(PROCESS process)
+{
+	DWORD exitCode = 0;
+
+	BOOL code = GetExitCodeProcess(process, &exitCode);
+
+	return code && (exitCode == STILL_ACTIVE);
+}
+
+std::vector<std::pair<std::string, PID>> getAllProcesses()
+{
+	HANDLE h;
+	PROCESSENTRY32 singleProcess = {sizeof(PROCESSENTRY32)};
+	h = CreateToolhelp32Snapshot( //takes a snapshot of specified processes
+		TH32CS_SNAPPROCESS, //get all processes
+		0); //ignored for SNAPPROCESS
+
+	std::vector<std::pair<std::string, PID>> returnVector;
+	returnVector.reserve(500);
+
+	while (Process32Next(h, &singleProcess))
+	{
+		if (singleProcess.th32ProcessID == 0) { continue; } //ignore system process
+
+		std::pair<std::string, PID> process;
+
+		process.first = singleProcess.szExeFile;
+		process.second = singleProcess.th32ProcessID;
+
+		returnVector.push_back(std::move(process));
+	}
+
+	CloseHandle(h);
+
+	return returnVector;
+}
+
+std::vector<ProcessWindow> allWindows;
+
+void setNameOfProcesses()
+{
+	HANDLE h;
+	PROCESSENTRY32 singleProcess = {sizeof(PROCESSENTRY32)};
+	h = CreateToolhelp32Snapshot( //takes a snapshot of specified processes
+		TH32CS_SNAPPROCESS, //get all processes
+		0); //ignored for SNAPPROCESS
+
+	while (Process32Next(h, &singleProcess))
+	{
+		auto name = singleProcess.szExeFile;
+		auto pid = singleProcess.th32ProcessID;
+
+		auto f = std::find_if(allWindows.begin(), allWindows.end(), [pid](ProcessWindow& i) { return i.pid == pid; });
+
+		if (f != allWindows.end())
+		{
+			int index = f - allWindows.begin();
+
+			allWindows[index].processName = name;
+
+		}
+
+	}
+
+	for (int i = 0; i < allWindows.size(); i++)
+	{
+		if (allWindows[i].processName == "---notFound?---")
+		{
+			allWindows.erase(allWindows.begin() + i);
+			i--;
+		}
+	}
+
+
+	CloseHandle(h);
+}
+
+BOOL CALLBACK EnumWindowsProc(
+	HWND   hwnd,
+	LPARAM lParam
+)
+{
+	DWORD pid = 0;
+	GetWindowThreadProcessId(hwnd, &pid);
+
+
+	if (pid && IsWindowVisible(hwnd))
+	{
+		char name[MAX_PATH + 1] = {};
+		GetWindowTextA(hwnd, name, sizeof(name));
+
+		if (name[0] != '\0')
+		{
+			ProcessWindow p;
+			p.pid = pid;
+			p.windowName = name;
+			p.processName = "---notFound?---";
+
+			allWindows.push_back(p);
+		}
+	}
+
+	return true;
+}
+
+std::vector<ProcessWindow> getAllWindows()
+{
+	allWindows.clear();
+
+	EnumWindows(EnumWindowsProc, 0);
+	setNameOfProcesses();
+
+	return allWindows;
+}
+
+
+
+
+
+OppenedQuery initVirtualQuery(PROCESS process)
+{
+	OppenedQuery q = {};
+
+	q.queriedProcess = process;
+	q.baseQueriedPtr = 0;
+	return q;
+}
+
+bool getNextQuery(OppenedQuery &query, void *&low, void *&hi, int &flags)
+{
+
+	if (query.queriedProcess == 0) { return false; }
+
+	flags = memQueryFlags_None;
+	low = nullptr;
+	hi = nullptr;
+
+	MEMORY_BASIC_INFORMATION memInfo;
+
+	bool rez = 0;
+	while(true)
+	{
+		rez = VirtualQueryEx(query.queriedProcess, (void *)query.baseQueriedPtr, &memInfo, sizeof(MEMORY_BASIC_INFORMATION));
+
+		if (!rez) 
+		{
+			query = {};
+			return false; 
+		}
+
+		query.baseQueriedPtr = (char *)memInfo.BaseAddress + memInfo.RegionSize;
+		
+		if (memInfo.State == MEM_COMMIT)
+		{
+			if (memInfo.Protect & PAGE_READONLY)
+			{
+				flags |= memQueryFlags_Read;
+			}
+
+			if (memInfo.Protect & PAGE_READWRITE)
+			{
+				flags |= (memQueryFlags_Read | memQueryFlags_Write);
+			}
+
+			if (memInfo.Protect & PAGE_EXECUTE)
+			{
+				flags |= memQueryFlags_Execute;
+			}
+
+			if (memInfo.Protect & PAGE_EXECUTE_READ)
+			{
+				flags |= (memQueryFlags_Execute | memQueryFlags_Read);
+			}
+
+			if (memInfo.Protect & PAGE_EXECUTE_READWRITE)
+			{
+				flags |= (memQueryFlags_Execute | memQueryFlags_Read | memQueryFlags_Write);
+			}
+
+			if (memInfo.Protect & PAGE_EXECUTE_WRITECOPY)
+			{
+				flags |= (memQueryFlags_Execute | memQueryFlags_Read);
+			}
+
+			if (memInfo.Protect & PAGE_WRITECOPY)
+			{
+				flags |= memQueryFlags_Read;
+			}
+
+			low = memInfo.BaseAddress;
+			hi = (char *)memInfo.BaseAddress + memInfo.RegionSize;
+			return true;
+		}
+
+	}
+}
+
+
+
+PROCESS openProcessFromPid(PID pid)
+{
+
+	HANDLE handleToProcess = OpenProcess(
+		PROCESS_VM_READ |
+		PROCESS_QUERY_INFORMATION |
+		PROCESS_VM_WRITE |
+		PROCESS_VM_OPERATION, 0, pid);
+
+	if ((handleToProcess == INVALID_HANDLE_VALUE) || (handleToProcess == 0))
+	{
+		handleToProcess = 0;
+	}
+
+	return handleToProcess;
+}
+
+void closeProcess(PROCESS process)
+{
+	CloseHandle(process);
+}
+
+
+#endif

@@ -8,6 +8,11 @@
 #include "imgui.h"
 #include "util/sokol_imgui.h"
 
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <TlHelp32.h>
+
 #include <vector>
 
 constexpr uint32_t SCREEN_WIDTH = 800;
