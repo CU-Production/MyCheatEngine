@@ -1,6 +1,10 @@
 #define SOKOL_IMPL
 #define SOKOL_NO_ENTRY
+#if defined WIN32 || defined _WIN32 || defined __WIN32__ || defined __NT__
 #define SOKOL_D3D11
+#else
+#define SOKOL_GLCORE
+#endif
 #include "sokol_app.h"
 #include "sokol_gfx.h"
 #include "sokol_glue.h"
